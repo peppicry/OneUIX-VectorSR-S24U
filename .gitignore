@@ -1,0 +1,10 @@
+OneUIX-compat-build/
+*.apk
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+local.properties
+.gradle/

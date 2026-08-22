@@ -1,0 +1,234 @@
+name: Publish S24U compatibility release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'release-trigger.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout compatibility repository
+        uses: actions/checkout@v4
+
+      - name: Build portable source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORTABLE_ROOT="$RUNNER_TEMP/portable"
+          PORTABLE_DIR="$PORTABLE_ROOT/OneUIX-VectorSR-S24U"
+          mkdir -p "$PORTABLE_DIR" out
+
+          cp README.md "$PORTABLE_DIR/README.md"
+          cp scripts/build-windows.ps1 "$PORTABLE_DIR/build-windows.ps1"
+          cp patch/apply_oneuix_vector_sr_compat.py "$PORTABLE_DIR/apply_oneuix_vector_sr_compat.py"
+          cp LICENSE.txt "$PORTABLE_DIR/LICENSE.txt"
+          cp NOTICE.md "$PORTABLE_DIR/NOTICE.md"
+          cp UPSTREAM.md "$PORTABLE_DIR/UPSTREAM.md"
+
+          (
+            cd "$PORTABLE_ROOT"
+            zip -qr "$GITHUB_WORKSPACE/out/OneUIX-VectorSR-S24U.zip" OneUIX-VectorSR-S24U
+          )
+
+          unzip -t out/OneUIX-VectorSR-S24U.zip
+          LIST=$(unzip -Z1 out/OneUIX-VectorSR-S24U.zip)
+          printf '%s\n' "$LIST"
+          for required in README.md build-windows.ps1 apply_oneuix_vector_sr_compat.py LICENSE.txt NOTICE.md UPSTREAM.md; do
+            if ! grep -Eq "(^|/)${required}$" <<< "$LIST"; then
+              echo "::error::Portable package is missing ${required}"
+              exit 1
+            fi
+          done
+          echo 'Portable package SHA-256:'
+          sha256sum out/OneUIX-VectorSR-S24U.zip
+
+      - name: Setup Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform 37.0
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'platform-tools' --channel=3
+
+      - name: Fetch pinned One UI X upstream
+        shell: bash
+        run: |
+          git clone https://github.com/SoClear/OneUIX.git oneuix
+          cd oneuix
+          git checkout 78e2ef1d10320aab293631f97ec636cf64d4cbea
+          test "$(git rev-parse HEAD)" = "78e2ef1d10320aab293631f97ec636cf64d4cbea"
+
+      - name: Apply S24U compatibility patch
+        shell: bash
+        run: |
+          cd oneuix
+          python3 "$GITHUB_WORKSPACE/patch/apply_oneuix_vector_sr_compat.py"
+          git diff --check
+          grep -q 'versionName = "1.7.0-vectorsr-s24u"' app/build.gradle.kts
+          grep -q 'intervalMillisecond: Long = 1000L' app/src/main/java/io/github/soclear/oneuix/hook/Network.kt
+          grep -q '%.2fMb' app/src/main/java/io/github/soclear/oneuix/hook/Network.kt
+
+      - name: Package corresponding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd oneuix
+            git ls-files | zip -q "$GITHUB_WORKSPACE/out/OneUIX-1.7.0-VectorSR-S24U-source.zip" -@
+            git diff --binary > "$GITHUB_WORKSPACE/out/OneUIX-1.7.0-VectorSR-S24U.patch"
+          )
+          cat > out/SOURCE-METADATA.txt <<EOF
+          Project: unofficial One UI X Vector-SR S24 Ultra compatibility build
+          Modified: 2026-08-22
+          One UI X upstream: SoClear/OneUIX
+          Upstream commit: 78e2ef1d10320aab293631f97ec636cf64d4cbea
+          Compatibility repository commit: ${GITHUB_SHA}
+          License: GNU Affero General Public License v3.0 (AGPL-3.0)
+          The source ZIP contains the patched tracked working-tree files used for this build.
+          EOF
+
+      - name: Build unsigned release APK
+        shell: bash
+        run: |
+          cd oneuix
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Sign and verify release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo '::error::Missing repository secret ANDROID_KEYSTORE_BASE64'
+            exit 1
+          fi
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
+            echo '::error::Missing repository secret ANDROID_KEYSTORE_PASSWORD'
+            exit 1
+          fi
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          BUILD_TOOLS="$SDK_ROOT/build-tools/37.0.0"
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          KEYSTORE="$RUNNER_TEMP/oneuix-signing.p12"
+          KEY_ALIAS='exported_key'
+          EXPECTED_CERT_SHA256='42eca8748569e3269d746706171969fe87fa635e804fae3265d9a850f7476ed8'
+
+          test -x "$ZIPALIGN"
+          test -x "$APKSIGNER"
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          trap 'rm -f "$KEYSTORE"' EXIT
+
+          UNSIGNED_APK=$(find oneuix/app/build/outputs/apk/release -maxdepth 1 -type f -name '*unsigned*.apk' | head -1)
+          if [ -z "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK=$(find oneuix/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)
+          fi
+          test -n "$UNSIGNED_APK"
+
+          ALIGNED_APK="$RUNNER_TEMP/OneUIX-S24U-aligned.apk"
+          SIGNED_APK='out/OneUIX-1.7.0-VectorSR-S24U-signed.apk'
+
+          "$ZIPALIGN" -p -f 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+          "$APKSIGNER" sign \
+            --ks "$KEYSTORE" \
+            --ks-type PKCS12 \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+
+          "$ZIPALIGN" -c -v 4 "$SIGNED_APK"
+          VERIFY_OUTPUT=$("$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK")
+          printf '%s\n' "$VERIFY_OUTPUT"
+
+          grep -q '^Verifies$' <<< "$VERIFY_OUTPUT"
+          grep -Eq 'Verified using v3 scheme .*: true' <<< "$VERIFY_OUTPUT"
+          if ! grep -qi "certificate SHA-256 digest: $EXPECTED_CERT_SHA256" <<< "$VERIFY_OUTPUT"; then
+            echo '::error::Signer certificate does not match the documented project-maintainer key'
+            exit 1
+          fi
+
+          rm -f "$ALIGNED_APK"
+
+      - name: Collect release checksums
+        shell: bash
+        run: |
+          (
+            cd out
+            rm -f SHA256SUMS.txt
+            for file in *; do
+              [ "$file" = 'SHA256SUMS.txt' ] && continue
+              sha256sum "$file"
+            done | sort > SHA256SUMS.txt
+          )
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG='v1.7.0-vectorsr-s24u'
+          TITLE='One UI X 1.7.0 — Vector-SR S24U compatibility'
+          NOTES=$(cat <<'EOF'
+          Unofficial device-tested compatibility build for Samsung Galaxy S24 Ultra / One UI 8.5 / Android 16 using the device-tested Vector-SR v1.2 (3136) S24U hotfix.
+
+          This release is not affiliated with or endorsed by SoClear/OneUIX, Vector-SR, Samsung, or their upstream developers.
+
+          Changes:
+          - restores the Samsung real-time network-speed toggle on the tested One UI 8.5 Settings build;
+          - shows separate upload/download traffic in SI bits/s (Kb/Mb/Gb);
+          - refreshes the speed display every 1 second.
+
+          Licensing and source:
+          - One UI X upstream is AGPL-3.0 and this modified build remains AGPL-3.0;
+          - the corresponding patched source used to build this APK is attached as a source ZIP;
+          - the exact upstream and compatibility commits are recorded in SOURCE-METADATA.txt;
+          - a portable build/patch package and SHA-256 checksums are also attached.
+
+          Signing:
+          - the APK is independently signed by the compatibility-project maintainer, not by upstream One UI X;
+          - signer certificate SHA-256: 42eca8748569e3269d746706171969fe87fa635e804fae3265d9a850f7476ed8.
+
+          Please report modification-specific issues to this compatibility project rather than upstream unless reproduced on unmodified One UI X.
+          EOF
+          )
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+              -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --target "${GITHUB_SHA}" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" out/* \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --target "${GITHUB_SHA}" \
+              --repo "$GITHUB_REPOSITORY"
+          fi

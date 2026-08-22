@@ -1,0 +1,1 @@
+Publish final release from compacted public-ready history.
