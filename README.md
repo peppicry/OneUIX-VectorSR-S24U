@@ -33,6 +33,18 @@ If your S24 Ultra was rooted using Root-My-Galaxy and Vector-SR becomes unstable
 
 This One UI X build is designed to run alongside that fixed Vector-SR baseline. Its own changes restore Samsung's real-time network-speed controls and adapt the separate upload/download indicator for the tested One UI 8.5 environment.
 
+## Required SystemUI reinjection after soft restart
+
+On the tested `SM-S928B` setup, after a KernelSU soft restart, Vector-SR can be active while One UI X's `com.android.systemui` hooks are not yet attached. Restart SystemUI once after the soft restart:
+
+```sh
+su -c 'kill $(pidof com.android.systemui)'
+```
+
+Android respawns `com.android.systemui` automatically. The status bar / Quick Settings can disappear briefly; once SystemUI returns, the tested setup loads the Vector-SR SystemUI injection and One UI X hooks normally.
+
+This command is a **SystemUI reinjection workaround** for the tested Vector-SR + One UI X setup. It is **not related to the separate overheating investigation** and should not be used as a thermal workaround. One execution after the soft restart is sufficient; do not run it repeatedly when the hooks are already working.
+
 ## What this compatibility patch changes
 
 1. Keeps both Samsung network-speed CSC gates enabled in Settings/SystemUI.
@@ -94,6 +106,7 @@ Local builds are unsigned unless you sign them yourself. GitHub Release builds a
 - Keep the known-good Vector-SR 3136 baseline unchanged.
 - Install this modified One UI X APK and enable its Settings + System UI scopes in Vector-SR.
 - Soft reboot.
+- Run `su -c 'kill $(pidof com.android.systemui)'` once and wait for SystemUI to respawn.
 - Open Settings > Notifications > Advanced settings.
 - Confirm the real-time network-speed switch is present and controls the indicator.
 - Confirm the separate upload/download readout uses `Kb/Mb/Gb` and refreshes about once per second.
