@@ -33,17 +33,21 @@ If your S24 Ultra was rooted using Root-My-Galaxy and Vector-SR becomes unstable
 
 This One UI X build is designed to run alongside that fixed Vector-SR baseline. Its own changes restore Samsung's real-time network-speed controls and adapt the separate upload/download indicator for the tested One UI 8.5 environment.
 
-## Required SystemUI reinjection after soft restart
+## Required SystemUI-only restart after soft restart
 
-On the tested `SM-S928B` setup, after a KernelSU soft restart, Vector-SR can be active while One UI X's `com.android.systemui` hooks are not yet attached. Restart SystemUI once after the soft restart:
+On the tested `SM-S928B` setup, **Vector-SR and the One UI X app can both open normally after a KernelSU soft restart**. The specific observed problem is that One UI X functions targeting `com.android.systemui` can remain inactive until that process is restarted once.
+
+Restart **only Samsung SystemUI**:
 
 ```sh
 su -c 'kill $(pidof com.android.systemui)'
 ```
 
-Android respawns `com.android.systemui` automatically. The status bar / Quick Settings can disappear briefly; once SystemUI returns, the tested setup loads the Vector-SR SystemUI injection and One UI X hooks normally.
+Android respawns `com.android.systemui` automatically. The status bar / Quick Settings can disappear briefly; once SystemUI returns, the tested setup activates the One UI X functions that depend on Vector-SR hooks in that process.
 
-This command is a **SystemUI reinjection workaround** for the tested Vector-SR + One UI X setup. It is **not related to the separate overheating investigation** and should not be used as a thermal workaround. One execution after the soft restart is sufficient; do not run it repeatedly when the hooks are already working.
+This is **not** a Vector-SR startup failure and **not** an One UI X app startup failure. It is a SystemUI-process hook activation/reinjection step. It is also **unrelated to the separate overheating investigation** and should not be used or documented as a thermal workaround.
+
+Only the SystemUI process needs this restart. There is no need to reinstall Vector-SR, restart the One UI X app, repeat the full KernelSU soft restart, or repeatedly kill SystemUI after the functions are active.
 
 ## What this compatibility patch changes
 
@@ -106,6 +110,7 @@ Local builds are unsigned unless you sign them yourself. GitHub Release builds a
 - Keep the known-good Vector-SR 3136 baseline unchanged.
 - Install this modified One UI X APK and enable its Settings + System UI scopes in Vector-SR.
 - Soft reboot.
+- Confirm that Vector-SR and One UI X themselves open normally; this does not yet prove the SystemUI-scoped functions are active.
 - Run `su -c 'kill $(pidof com.android.systemui)'` once and wait for SystemUI to respawn.
 - Open Settings > Notifications > Advanced settings.
 - Confirm the real-time network-speed switch is present and controls the indicator.
