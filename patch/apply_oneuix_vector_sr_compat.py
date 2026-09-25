@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
-NETWORK = Path("app/src/main/java/io/github/soclear/oneuix/hook/Network.kt")
+NETWORK = Path("hook/src/main/java/io/github/soclear/oneuix/hook/Network.kt")
 BUILD = Path("app/build.gradle.kts")
 
 text = NETWORK.read_text(encoding="utf-8")
@@ -13,36 +13,38 @@ text = text.replace(
     1,
 )
 
-old = '''    fun supportRealTimeNetworkSpeed(loadPackageParam: LoadPackageParam) {
-        if (loadPackageParam.packageName != Package.SETTINGS &&
-            loadPackageParam.packageName != Package.SYSTEMUI
+old = '''    context(xposedModule: XposedModule, param: XposedModuleInterface.PackageReadyParam)
+    fun supportRealTimeNetworkSpeed() {
+        if (param.packageName != Package.SETTINGS &&
+            param.packageName != Package.SYSTEMUI
         ) {
             return
         }
         try {
-            findAndHookMethod(
-                "com.samsung.android.feature.SemCscFeature",
-                loadPackageParam.classLoader,
+            val semCscFeatureClass =
+                param.classLoader.loadClass("com.samsung.android.feature.SemCscFeature")
+            val method = semCscFeatureClass.getDeclaredMethod(
                 "getBoolean",
                 String::class.java,
-                Boolean::class.java,
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        if (param.args[0] == "CscFeature_Common_SupportZProjectFunctionInGlobal") {
-                            param.result = true
-                        }
-                    }
-                }
+                Boolean::class.javaPrimitiveType
             )
+            xposedModule.hook(method).intercept { chain ->
+                if (chain.args.firstOrNull() == "CscFeature_Common_SupportZProjectFunctionInGlobal") {
+                    true
+                } else {
+                    chain.proceed()
+                }
+            }
         } catch (t: Throwable) {
-            XposedBridge.log(t)
+            xlog(t)
         }
     }
 '''
 
-new = '''    fun supportRealTimeNetworkSpeed(loadPackageParam: LoadPackageParam) {
-        if (loadPackageParam.packageName != Package.SETTINGS &&
-            loadPackageParam.packageName != Package.SYSTEMUI
+new = '''    context(xposedModule: XposedModule, param: XposedModuleInterface.PackageReadyParam)
+    fun supportRealTimeNetworkSpeed() {
+        if (param.packageName != Package.SETTINGS &&
+            param.packageName != Package.SYSTEMUI
         ) {
             return
         }
@@ -54,165 +56,153 @@ new = '''    fun supportRealTimeNetworkSpeed(loadPackageParam: LoadPackageParam)
 
         // Keep both Samsung CSC gates enabled in Settings and SystemUI.
         try {
-            val semCscFeatureClass = findClass(
-                "com.samsung.android.feature.SemCscFeature",
-                loadPackageParam.classLoader,
-            )
-            XposedBridge.hookAllMethods(
-                semCscFeatureClass,
-                "getBoolean",
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        val featureName = param.args.firstOrNull() as? String ?: return
+            val semCscFeatureClass =
+                param.classLoader.loadClass("com.samsung.android.feature.SemCscFeature")
+            semCscFeatureClass.declaredMethods
+                .filter { method ->
+                    method.name == "getBoolean" &&
+                        method.parameterTypes.firstOrNull() == String::class.java
+                }
+                .forEach { method ->
+                    xposedModule.hook(method).intercept { chain ->
+                        val featureName = chain.args.firstOrNull() as? String
                         if (featureName in networkSpeedFeatureKeys) {
-                            param.result = true
+                            true
+                        } else {
+                            chain.proceed()
                         }
                     }
                 }
-            )
-            XposedBridge.log(
-                "[OneUIX-VectorSR] network-speed CSC hooks active in ${loadPackageParam.packageName}"
-            )
+            xlog("[OneUIX-VectorSR] network-speed CSC hooks active in ${param.packageName}")
         } catch (t: Throwable) {
-            XposedBridge.log(t)
+            xlog(t)
         }
 
-        if (loadPackageParam.packageName == Package.SETTINGS) {
-            // Older/newer Samsung Settings builds can cache support before the CSC hook
-            // becomes observable. Force the controller itself to report AVAILABLE.
+        if (param.packageName == Package.SETTINGS) {
+            // Force Samsung's controller to expose the preference when the firmware
+            // caches feature support before the CSC hook becomes observable.
             try {
-                findAndHookMethod(
-                    "com.samsung.android.settings.notification.StatusBarNetworkSpeedController",
-                    loadPackageParam.classLoader,
-                    "getAvailabilityStatus",
-                    object : XC_MethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            param.result = 0
-                        }
-                    }
+                val controllerClass = param.classLoader.loadClass(
+                    "com.samsung.android.settings.notification.StatusBarNetworkSpeedController"
                 )
-                XposedBridge.log(
+                val availabilityMethod = controllerClass.getDeclaredMethod("getAvailabilityStatus")
+                xposedModule.hook(availabilityMethod).intercept {
+                    0
+                }
+                xlog(
                     "[OneUIX-VectorSR] StatusBarNetworkSpeedController availability forced to AVAILABLE"
                 )
             } catch (t: Throwable) {
-                XposedBridge.log(t)
+                xlog(t)
             }
 
-            // One UI 8.5 on the tested S24 Ultra no longer exposes the network_speed
-            // preference in sec_configure_notification_more_settings.xml. Inject a
-            // SwitchPreferenceCompat directly into that screen and bind it to the same
-            // Settings.System key already consumed by Samsung SystemUI.
+            // One UI 8.5 on the tested S24 Ultra can omit the network_speed
+            // preference from Advanced notification settings. Inject a
+            // SwitchPreferenceCompat and bind it to Samsung's Settings.System key.
             try {
-                findAndHookMethod(
-                    "com.samsung.android.settings.notification.ConfigureNotificationMoreSettings",
-                    loadPackageParam.classLoader,
+                val fragmentClass = param.classLoader.loadClass(
+                    "com.samsung.android.settings.notification.ConfigureNotificationMoreSettings"
+                )
+                val onCreateMethod = fragmentClass.getDeclaredMethod(
                     "onCreate",
                     Bundle::class.java,
-                    object : XC_MethodHook() {
-                        override fun afterHookedMethod(param: MethodHookParam) {
-                            try {
-                                val fragment = param.thisObject
-                                val preferenceScreen = callMethod(fragment, "getPreferenceScreen") ?: return
+                )
+                xposedModule.hook(onCreateMethod).intercept { chain ->
+                    val result = chain.proceed()
+                    try {
+                        val fragment = chain.thisObject
+                        val preferenceScreen =
+                            fragment.reflect.call("getPreferenceScreen") ?: return@intercept result
 
-                                // Do not create a duplicate if Samsung restores the preference later.
-                                val existing = callMethod(
-                                    preferenceScreen,
-                                    "findPreference",
-                                    "network_speed",
-                                )
-                                if (existing != null) {
-                                    XposedBridge.log(
-                                        "[OneUIX-VectorSR] native network_speed preference already present"
+                        val existing = preferenceScreen.reflect.call(
+                            "findPreference",
+                            "network_speed",
+                        )
+                        if (existing != null) {
+                            xlog("[OneUIX-VectorSR] native network_speed preference already present")
+                            return@intercept result
+                        }
+
+                        val context = fragment.reflect.call("requireContext") as Context
+                        val switchClass = param.classLoader.loadClass(
+                            "androidx.preference.SwitchPreferenceCompat"
+                        )
+                        val preference = switchClass
+                            .getConstructor(Context::class.java)
+                            .newInstance(context)
+
+                        preference.reflect.call("setKey", "network_speed")
+                        preference.reflect.call("setPersistent", false)
+
+                        val titleResId = context.resources.getIdentifier(
+                            "real_time_network_speed_title",
+                            "string",
+                            Package.SETTINGS,
+                        )
+                        val title = if (titleResId != 0) {
+                            context.getString(titleResId)
+                        } else {
+                            "Mostrar velocidade da rede em tempo real"
+                        }
+                        preference.reflect.call("setTitle", title)
+
+                        val enabled = AndroidSettings.System.getInt(
+                            context.contentResolver,
+                            "network_speed",
+                            0,
+                        ) != 0
+                        preference.reflect.call("setChecked", enabled)
+
+                        val listenerClass = param.classLoader.loadClass(
+                            "androidx.preference.Preference\$OnPreferenceChangeListener"
+                        )
+                        val listener = Proxy.newProxyInstance(
+                            param.classLoader,
+                            arrayOf(listenerClass),
+                        ) { proxy, method, args ->
+                            when (method.name) {
+                                "onPreferenceChange" -> {
+                                    val newValue = args?.getOrNull(1) as? Boolean
+                                        ?: return@newProxyInstance false
+                                    AndroidSettings.System.putInt(
+                                        context.contentResolver,
+                                        "network_speed",
+                                        if (newValue) 1 else 0,
                                     )
-                                    return
+                                    true
                                 }
 
-                                val context = callMethod(fragment, "requireContext") as Context
-                                val switchClass = findClass(
-                                    "androidx.preference.SwitchPreferenceCompat",
-                                    loadPackageParam.classLoader,
-                                )
-                                val preference = switchClass
-                                    .getConstructor(Context::class.java)
-                                    .newInstance(context)
-
-                                callMethod(preference, "setKey", "network_speed")
-                                callMethod(preference, "setPersistent", false)
-
-                                val titleResId = context.resources.getIdentifier(
-                                    "real_time_network_speed_title",
-                                    "string",
-                                    Package.SETTINGS,
-                                )
-                                val title = if (titleResId != 0) {
-                                    context.getString(titleResId)
-                                } else {
-                                    "Mostrar velocidade da rede em tempo real"
-                                }
-                                callMethod(preference, "setTitle", title)
-
-                                val enabled = AndroidSettings.System.getInt(
-                                    context.contentResolver,
-                                    "network_speed",
-                                    0,
-                                ) != 0
-                                callMethod(preference, "setChecked", enabled)
-
-                                val listenerClass = findClass(
-                                    "androidx.preference.Preference\\$OnPreferenceChangeListener",
-                                    loadPackageParam.classLoader,
-                                )
-                                val listener = Proxy.newProxyInstance(
-                                    loadPackageParam.classLoader,
-                                    arrayOf(listenerClass),
-                                ) { proxy, method, args ->
-                                    when (method.name) {
-                                        "onPreferenceChange" -> {
-                                            val newValue = args?.getOrNull(1) as? Boolean
-                                                ?: return@newProxyInstance false
-                                            AndroidSettings.System.putInt(
-                                                context.contentResolver,
-                                                "network_speed",
-                                                if (newValue) 1 else 0,
-                                            )
-                                            true
-                                        }
-                                        "toString" -> "OneUIXNetworkSpeedListener"
-                                        "hashCode" -> System.identityHashCode(proxy)
-                                        "equals" -> proxy === args?.getOrNull(0)
-                                        else -> null
-                                    }
-                                }
-                                callMethod(preference, "setOnPreferenceChangeListener", listener)
-
-                                // Keep it close to Samsung's existing status-bar notification toggle.
-                                val anchor = callMethod(
-                                    preferenceScreen,
-                                    "findPreference",
-                                    "show_notification_app_icon",
-                                )
-                                if (anchor != null) {
-                                    val anchorOrder = callMethod(anchor, "getOrder") as? Int
-                                    if (anchorOrder != null && anchorOrder < Int.MAX_VALUE) {
-                                        callMethod(preference, "setOrder", anchorOrder + 1)
-                                    }
-                                }
-
-                                callMethod(preferenceScreen, "addPreference", preference)
-                                XposedBridge.log(
-                                    "[OneUIX-VectorSR] injected network_speed preference into ConfigureNotificationMoreSettings"
-                                )
-                            } catch (t: Throwable) {
-                                XposedBridge.log(t)
+                                "toString" -> "OneUIXNetworkSpeedListener"
+                                "hashCode" -> System.identityHashCode(proxy)
+                                "equals" -> proxy === args?.getOrNull(0)
+                                else -> null
                             }
                         }
+                        preference.reflect.call("setOnPreferenceChangeListener", listener)
+
+                        val anchor = preferenceScreen.reflect.call(
+                            "findPreference",
+                            "show_notification_app_icon",
+                        )
+                        if (anchor != null) {
+                            val anchorOrder = anchor.reflect.call("getOrder") as? Int
+                            if (anchorOrder != null && anchorOrder < Int.MAX_VALUE) {
+                                preference.reflect.call("setOrder", anchorOrder + 1)
+                            }
+                        }
+
+                        preferenceScreen.reflect.call("addPreference", preference)
+                        xlog(
+                            "[OneUIX-VectorSR] injected network_speed preference into ConfigureNotificationMoreSettings"
+                        )
+                    } catch (t: Throwable) {
+                        xlog(t)
                     }
-                )
-                XposedBridge.log(
-                    "[OneUIX-VectorSR] advanced-settings network_speed injector armed"
-                )
+                    result
+                }
+                xlog("[OneUIX-VectorSR] advanced-settings network_speed injector armed")
             } catch (t: Throwable) {
-                XposedBridge.log(t)
+                xlog(t)
             }
         }
     }
@@ -220,28 +210,82 @@ new = '''    fun supportRealTimeNetworkSpeed(loadPackageParam: LoadPackageParam)
 
 if old not in text:
     raise SystemExit("Network.kt supportRealTimeNetworkSpeed anchor not found; upstream changed")
-NETWORK.write_text(text.replace(old, new, 1), encoding="utf-8")
+text = text.replace(old, new, 1)
 
 # Convert the existing separate upload/download formatter from bytes/s to SI bits/s.
-old_format = '            // 格式化网速，speed 为每秒字节数\n            private fun formatSpeed(bytesPerSecond: Float): String {\n                // 0 或负数显示为 "0B"\n                if (bytesPerSecond <= 0f) {\n                    return "0B"\n                }\n                if (bytesPerSecond < 1024f) {\n                    return "${bytesPerSecond.roundToInt()}B"\n                }\n                val kiBytesPerSecond = bytesPerSecond / 1024f\n                if (kiBytesPerSecond < 100f) {\n                    return "%.2fK".format(kiBytesPerSecond)\n                }\n                if (kiBytesPerSecond < 1000f) {\n                    return "%.1fK".format(kiBytesPerSecond)\n                }\n                val miBytesPerSecond = kiBytesPerSecond / 1024f\n                if (miBytesPerSecond < 100f) {\n                    return "%.2fM".format(miBytesPerSecond)\n                }\n                return "%.1fM".format(miBytesPerSecond)\n            }\n'
-new_format = '            // Format real-time speed in bits/second (compact status-bar notation).\n            // TrafficStats reports bytes; multiply by 8 and use decimal SI units.\n            private fun formatSpeed(bytesPerSecond: Float): String {\n                if (bytesPerSecond <= 0f) {\n                    return "0b"\n                }\n\n                val bitsPerSecond = bytesPerSecond * 8f\n                if (bitsPerSecond < 1000f) {\n                    return "${bitsPerSecond.roundToInt()}b"\n                }\n\n                val kiloBitsPerSecond = bitsPerSecond / 1000f\n                if (kiloBitsPerSecond < 100f) {\n                    return "%.2fKb".format(kiloBitsPerSecond)\n                }\n                if (kiloBitsPerSecond < 1000f) {\n                    return "%.1fKb".format(kiloBitsPerSecond)\n                }\n\n                val megaBitsPerSecond = kiloBitsPerSecond / 1000f\n                if (megaBitsPerSecond < 100f) {\n                    return "%.2fMb".format(megaBitsPerSecond)\n                }\n                if (megaBitsPerSecond < 1000f) {\n                    return "%.1fMb".format(megaBitsPerSecond)\n                }\n\n                val gigaBitsPerSecond = megaBitsPerSecond / 1000f\n                if (gigaBitsPerSecond < 100f) {\n                    return "%.2fGb".format(gigaBitsPerSecond)\n                }\n                return "%.1fGb".format(gigaBitsPerSecond)\n            }\n'
+old_format = '''        // 格式化网速，speed 为每秒字节数
+        fun formatSpeed(bytesPerSecond: Float): String {
+            // 0 或负数显示为 "0B"
+            if (bytesPerSecond <= 0f) {
+                return "0B"
+            }
+            if (bytesPerSecond < 1024f) {
+                return "${bytesPerSecond.roundToInt()}B"
+            }
+            val kiBytesPerSecond = bytesPerSecond / 1024f
+            if (kiBytesPerSecond < 100f) {
+                return "%.2fK".format(kiBytesPerSecond)
+            }
+            if (kiBytesPerSecond < 1000f) {
+                return "%.1fK".format(kiBytesPerSecond)
+            }
+            val miBytesPerSecond = kiBytesPerSecond / 1024f
+            if (miBytesPerSecond < 100f) {
+                return "%.2fM".format(miBytesPerSecond)
+            }
+            return "%.1fM".format(miBytesPerSecond)
+        }
+'''
+new_format = '''        // Format real-time speed in bits/second (compact status-bar notation).
+        // TrafficStats reports bytes; multiply by 8 and use decimal SI units.
+        fun formatSpeed(bytesPerSecond: Float): String {
+            if (bytesPerSecond <= 0f) {
+                return "0b"
+            }
+
+            val bitsPerSecond = bytesPerSecond * 8f
+            if (bitsPerSecond < 1000f) {
+                return "${bitsPerSecond.roundToInt()}b"
+            }
+
+            val kiloBitsPerSecond = bitsPerSecond / 1000f
+            if (kiloBitsPerSecond < 100f) {
+                return "%.2fKb".format(kiloBitsPerSecond)
+            }
+            if (kiloBitsPerSecond < 1000f) {
+                return "%.1fKb".format(kiloBitsPerSecond)
+            }
+
+            val megaBitsPerSecond = kiloBitsPerSecond / 1000f
+            if (megaBitsPerSecond < 100f) {
+                return "%.2fMb".format(megaBitsPerSecond)
+            }
+            if (megaBitsPerSecond < 1000f) {
+                return "%.1fMb".format(megaBitsPerSecond)
+            }
+
+            val gigaBitsPerSecond = megaBitsPerSecond / 1000f
+            if (gigaBitsPerSecond < 100f) {
+                return "%.2fGb".format(gigaBitsPerSecond)
+            }
+            return "%.1fGb".format(gigaBitsPerSecond)
+        }
+'''
 if old_format not in text:
     raise SystemExit("Network.kt formatSpeed anchor not found; upstream changed")
-NETWORK.write_text(text.replace(old_format, new_format, 1), encoding="utf-8")
+text = text.replace(old_format, new_format, 1)
 
-# Refresh separate upload/download network speed every second instead of every 3 seconds.
-text = NETWORK.read_text(encoding="utf-8")
-old_interval = "        intervalMillisecond: Long = 3000L\n"
-new_interval = "        intervalMillisecond: Long = 1000L\n"
+old_interval = "        intervalMillisecond: Long = 3000L,\n"
+new_interval = "        intervalMillisecond: Long = 1000L,\n"
 if old_interval not in text:
     raise SystemExit("Network.kt interval anchor not found; upstream changed")
 NETWORK.write_text(text.replace(old_interval, new_interval, 1), encoding="utf-8")
 
 build = BUILD.read_text(encoding="utf-8")
-old_version = 'versionName = "1.7.0"'
-new_version = 'versionName = "1.7.0-vectorsr-s24u"'
+old_version = 'versionName = "1.9.0"'
+new_version = 'versionName = "1.9.0-vectorsr-s24u"'
 if old_version not in build:
     raise SystemExit("One UI X versionName anchor not found; upstream changed")
 BUILD.write_text(build.replace(old_version, new_version, 1), encoding="utf-8")
 
-print("Applied One UI X Vector-SR/S24U network-speed compatibility patch")
+print("Applied One UI X 1.9.0 Vector-SR/S24U network-speed compatibility patch")

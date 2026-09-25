@@ -70,8 +70,8 @@ jobs:
         run: |
           git clone https://github.com/SoClear/OneUIX.git oneuix
           cd oneuix
-          git checkout 78e2ef1d10320aab293631f97ec636cf64d4cbea
-          test "$(git rev-parse HEAD)" = "78e2ef1d10320aab293631f97ec636cf64d4cbea"
+          git checkout 4adebea56d00369dc6cd51c2718d44b16120551d
+          test "$(git rev-parse HEAD)" = "4adebea56d00369dc6cd51c2718d44b16120551d"
 
       - name: Apply S24U compatibility patch
         shell: bash
@@ -79,9 +79,9 @@ jobs:
           cd oneuix
           python3 "$GITHUB_WORKSPACE/patch/apply_oneuix_vector_sr_compat.py"
           git diff --check
-          grep -q 'versionName = "1.7.0-vectorsr-s24u"' app/build.gradle.kts
-          grep -q 'intervalMillisecond: Long = 1000L' app/src/main/java/io/github/soclear/oneuix/hook/Network.kt
-          grep -q '%.2fMb' app/src/main/java/io/github/soclear/oneuix/hook/Network.kt
+          grep -q 'versionName = "1.9.0-vectorsr-s24u"' app/build.gradle.kts
+          grep -q 'intervalMillisecond: Long = 1000L' hook/src/main/java/io/github/soclear/oneuix/hook/Network.kt
+          grep -q '%.2fMb' hook/src/main/java/io/github/soclear/oneuix/hook/Network.kt
 
       - name: Package corresponding source
         shell: bash
@@ -89,14 +89,14 @@ jobs:
           set -euo pipefail
           (
             cd oneuix
-            git ls-files | zip -q "$GITHUB_WORKSPACE/out/OneUIX-1.7.0-VectorSR-S24U-source.zip" -@
-            git diff --binary > "$GITHUB_WORKSPACE/out/OneUIX-1.7.0-VectorSR-S24U.patch"
+            git ls-files | zip -q "$GITHUB_WORKSPACE/out/OneUIX-1.9.0-VectorSR-S24U-source.zip" -@
+            git diff --binary > "$GITHUB_WORKSPACE/out/OneUIX-1.9.0-VectorSR-S24U.patch"
           )
           cat > out/SOURCE-METADATA.txt <<EOF
           Project: unofficial One UI X Vector-SR S24 Ultra compatibility build
-          Modified: 2026-08-22
+          Modified: 2026-09-24
           One UI X upstream: SoClear/OneUIX
-          Upstream commit: 78e2ef1d10320aab293631f97ec636cf64d4cbea
+          Upstream commit: 4adebea56d00369dc6cd51c2718d44b16120551d
           Compatibility repository commit: ${GITHUB_SHA}
           License: GNU Affero General Public License v3.0 (AGPL-3.0)
           The source ZIP contains the patched tracked working-tree files used for this build.
@@ -148,7 +148,7 @@ jobs:
           test -n "$UNSIGNED_APK"
 
           ALIGNED_APK="$RUNNER_TEMP/OneUIX-S24U-aligned.apk"
-          SIGNED_APK='out/OneUIX-1.7.0-VectorSR-S24U-signed.apk'
+          SIGNED_APK='out/OneUIX-1.9.0-VectorSR-S24U-signed.apk'
 
           "$ZIPALIGN" -p -f 4 "$UNSIGNED_APK" "$ALIGNED_APK"
           "$APKSIGNER" sign \
@@ -191,14 +191,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG='v1.7.0-vectorsr-s24u'
-          TITLE='One UI X 1.7.0 — Vector-SR S24U compatibility'
+          TAG='v1.9.0-vectorsr-s24u'
+          TITLE='One UI X 1.9.0 — Vector-SR S24U compatibility'
           NOTES=$(cat <<'EOF'
-          Unofficial device-tested compatibility build for Samsung Galaxy S24 Ultra / One UI 8.5 / Android 16 using the device-tested Vector-SR v1.2 (3136) S24U hotfix.
+          Unofficial One UI X 1.9.0 compatibility build for Samsung Galaxy S24 Ultra / One UI 8.5 / Android 16, rebased from the previously device-tested 1.7.0 compatibility patch and intended for use with the device-tested Vector-SR v1.2 (3136) S24U hotfix. Fresh on-device validation is required for this 1.9.0 rebase.
 
           This release is not affiliated with or endorsed by SoClear/OneUIX, Vector-SR, Samsung, or their upstream developers.
 
-          Changes:
+          Upstream base:
+          - One UI X 1.9.0 (11), commit 4adebea56d00369dc6cd51c2718d44b16120551d;
+          - upstream migrated to LibXposed API 102 and the :app/:common/:hook module layout.
+
+          Compatibility changes:
           - restores the Samsung real-time network-speed toggle on the tested One UI 8.5 Settings build;
           - shows separate upload/download traffic in SI bits/s (Kb/Mb/Gb);
           - refreshes the speed display every 1 second.

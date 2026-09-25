@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$commit = "78e2ef1d10320aab293631f97ec636cf64d4cbea"
+$commit = "4adebea56d00369dc6cd51c2718d44b16120551d"
 $dir = Join-Path $PWD "OneUIX-compat-build"
 if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
 git clone https://github.com/SoClear/OneUIX.git $dir

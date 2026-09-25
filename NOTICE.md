@@ -5,9 +5,10 @@ This repository distributes a device-specific modified version/build harness bas
 ## Attribution
 
 - Original project: One UI X by its upstream authors and contributors.
-- Upstream revision used here: `78e2ef1d10320aab293631f97ec636cf64d4cbea`.
+- Upstream target for this modified build: One UI X 1.9.0 (11), using LibXposed API 102.
+- Upstream revision used here: `4adebea56d00369dc6cd51c2718d44b16120551d`.
 - Upstream license: GNU Affero General Public License v3.0.
-- Modification date: 2026-08-22.
+- Modification date: 2026-09-24.
 
 The compatibility changes are documented in the repository README and patch source. Original copyrights and upstream notices are not replaced by this notice.
 

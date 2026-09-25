@@ -3,26 +3,29 @@
 > [!IMPORTANT]
 > **Unofficial modified project.** This repository is not affiliated with, sponsored by, or endorsed by **SoClear/OneUIX**, **Vector-SR**, Samsung, Root-My-Galaxy, or their upstream developers. If a problem occurs only with this modified build, report it here rather than to upstream unless it is first reproduced on the unmodified upstream release.
 
-Device-tested compatibility patch for **One UI X 1.7.0** on Samsung Galaxy S24 Ultra running One UI 8.5 / Android 16, tested in a **Root-My-Galaxy / KernelSU** setup with the device-tested **Vector-SR S24U hotfix v1.2 (3136)**.
+Compatibility patch rebased to **One UI X 1.9.0** for Samsung Galaxy S24 Ultra running One UI 8.5 / Android 16, intended for the same **Root-My-Galaxy / KernelSU** setup and device-tested **Vector-SR S24U hotfix v1.2 (3136)**. The compatibility behavior was originally device-tested on One UI X 1.7.0; this 1.9.0 rebase requires fresh on-device validation.
 
 ## Modified-version notice
 
-- Modified version date: **2026-08-22**
+- Modified version date: **2026-09-24**
 - One UI X upstream: `SoClear/OneUIX`
-- Pinned upstream revision: `78e2ef1d10320aab293631f97ec636cf64d4cbea`
-- Upstream version: `1.7.0 (9)`
-- Modified versionName: `1.7.0-vectorsr-s24u`
+- Pinned upstream revision: `4adebea56d00369dc6cd51c2718d44b16120551d`
+- Upstream version: `1.9.0 (11)`
+- Modified versionName: `1.9.0-vectorsr-s24u`
 - License: **GNU Affero General Public License v3.0 (AGPL-3.0)**
 
 The original One UI X project, source history, copyrights, names, and upstream work remain credited to their original authors. This repository contains a device-specific compatibility modification and reproducible build harness; it does not claim authorship of One UI X itself.
 
 ## Tested baseline
 
+The device-specific behavior below was established on the original 1.7.0 compatibility build. The repository now targets upstream 1.9.0, so the same checks should be repeated on-device before treating the rebase as validated.
+
 - Device: Samsung Galaxy S24 Ultra (`SM-S928B`)
 - Android: 16
 - One UI: 8.5
 - Root setup: [Root-My-Galaxy](https://github.com/BuSung-dev/Root-My-Galaxy) / KernelSU
-- One UI X upstream: 1.7.0 at the pinned commit above
+- Original device-tested One UI X upstream: 1.7.0 at commit `78e2ef1d10320aab293631f97ec636cf64d4cbea`
+- Current rebase target: One UI X 1.9.0 at commit `4adebea56d00369dc6cd51c2718d44b16120551d`
 - Vector-SR baseline: device-tested Samsung Shared-UID hotfix `v1.2 (3136)`
 
 ## Root-My-Galaxy / KernelSU tested setup
@@ -48,6 +51,10 @@ Android respawns `com.android.systemui` automatically. The status bar / Quick Se
 This is **not** a Vector-SR startup failure and **not** an One UI X app startup failure. It is a SystemUI-process hook activation/reinjection step. It is also **unrelated to the separate overheating investigation** and should not be used or documented as a thermal workaround.
 
 Only the SystemUI process needs this restart. There is no need to reinstall Vector-SR, restart the One UI X app, repeat the full KernelSU soft restart, or repeatedly kill SystemUI after the functions are active.
+
+## Upstream 1.9.0 rebase
+
+The 1.9.0 upstream base uses **LibXposed API 102** and separates the project into `:app`, `:common`, and `:hook` modules. This compatibility project keeps its device-specific changes as a patch applied on top of that upstream structure rather than reverting the refactor.
 
 ## What this compatibility patch changes
 
@@ -118,7 +125,7 @@ Local builds are unsigned unless you sign them yourself. GitHub Release builds a
 
 ## Known unrelated One UI X / One UI 8.5 hooks
 
-The tested firmware still logs missing legacy hook targets such as `NetspeedViewController$NetworkSpeedManager$1` and `QSClockQuickStarHelper` in paths unrelated to this compatibility patch. This project deliberately does not broaden the Vector-SR hotfix to suppress or change those unrelated errors.
+The original 1.7.0 test baseline logged missing legacy hook targets such as `NetspeedViewController$NetworkSpeedManager$1` and `QSClockQuickStarHelper` in paths unrelated to this compatibility patch. Upstream 1.9.0 includes broader ClassNotFoundException fixes, so these observations must be rechecked rather than assumed to remain unchanged. This project deliberately does not broaden the Vector-SR hotfix to suppress or change those unrelated errors.
 
 ## License
 
